@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id       Int    @id @default(autoincrement()) @map("User_Id")
+  name     String @map("User_Name")
+  email    String @unique @map("E_mail")
+  password String @map("Password")
+  role     String @map("Role")
+
+  employees Employee[]
+}
+
+model Department {
+  id        Int        @id @default(autoincrement()) @map("Dept_Id")
+  name      String     @map("Dept_Name")
+  employees Employee[]
+}
+
+model Grade {
+  id          Int        @id @default(autoincrement()) @map("Grade_Id")
+  name        String     @map("Grade_Name")
+  basicSalary Float      @map("Basic_Salary")
+  bonus       Float      @map("Grade_Bonus")
+  employees   Employee[]
+}
+
+model Employee {
+  id       Int      @id @default(autoincrement()) @map("Employee_Id")
+  userId   Int      @map("User_Id")
+  deptId   Int      @map("Dept_Id")
+  gradeId  Int      @map("Grade_Id")
+  hireDate DateTime @map("Hire_Date")
+
+  user       User       @relation(fields: [userId], references: [id])
+  department Department @relation(fields: [deptId], references: [id])
+  grade      Grade      @relation(fields: [gradeId], references: [id])
+  salaries   Salary[]
+}
+
+model Salary {
+  id         Int      @id @default(autoincrement()) @map("Salary_Id")
+  employeeId Int      @map("Employee_Id")
+  salary     Float    @map("Salary")
+  salaryDate DateTime @map("Salary_Date")
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+}

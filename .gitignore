@@ -33,3 +33,4 @@ coverage
 
 #Package-json
 package-lock.json
+/generated/prisma
