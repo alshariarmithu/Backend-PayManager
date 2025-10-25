@@ -42,6 +42,7 @@ router.post("/", async (req, res) => {
   }
 });
 
+
 // DELETE employee by id
 router.delete("/:id", async (req, res) => {
   try {

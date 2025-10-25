@@ -5,7 +5,7 @@ const router = express.Router();
 
 router.get("/", async (req, res) => {
   try {
-    console.log("paichi")
+    //console.log("paichi")
     const totalUsers = await prisma.user.count();
     const totalEmployees = await prisma.employee.count();
     const totalDepartments = await prisma.department.count();
