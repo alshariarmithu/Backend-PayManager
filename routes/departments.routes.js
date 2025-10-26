@@ -3,107 +3,124 @@ import prisma from "../config/client.js";
 
 const router = express.Router();
 
-// GET all departments
+//type casting
+const toNum = (val) => (typeof val === "bigint" ? Number(val) : val);
+
 router.get("/", async (req, res) => {
   try {
-    const departments = await prisma.department.findMany({
-      include: {
-        _count: {
-          select: { employees: true },
-        },
-      },
-    });
+    const departments = await prisma.$queryRaw`
+      SELECT 
+        d.Dept_Id AS Dept_Id,
+        d.Dept_Name AS Dept_Name,
+        COUNT(e.Employee_Id) AS Total_Employees
+      FROM Department d
+      LEFT JOIN Employee e ON e.Dept_Id = d.Dept_Id
+      GROUP BY d.Dept_Id, d.Dept_Name
+      ORDER BY d.Dept_Id ASC;
+    `;
 
-    // Transform to match frontend structure
-    const formattedDepartments = departments.map((dept) => ({
-      Dept_Id: dept.id,
-      Dept_Name: dept.name,
-      Total_Employees: dept._count.employees,
+    const formatted = departments.map((d) => ({
+      Dept_Id: toNum(d.Dept_Id),
+      Dept_Name: d.Dept_Name,
+      Total_Employees: toNum(d.Total_Employees),
     }));
 
-    res.json(formattedDepartments);
+    res.json(formatted);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to fetch departments" });
   }
 });
 
-// POST create new department
+//create dept
 router.post("/", async (req, res) => {
   try {
-    const { Dept_Name, Total_Employees } = req.body;
+    const { Dept_Name } = req.body;
 
     if (!Dept_Name || Dept_Name.trim() === "") {
       return res.status(400).json({ error: "Department name is required" });
     }
 
-    const department = await prisma.department.create({
-      data: {
-        name: Dept_Name,
-        // Note: Total_Employees is typically calculated from actual employees
-        // If you want to store it directly, add it to your schema
-      },
-      include: {
-        _count: {
-          select: { employees: true },
-        },
-      },
-    });
+    const result = await prisma.$executeRaw`
+      INSERT INTO Department (Dept_Name)
+      VALUES (${Dept_Name});
+    `;
 
-    const formattedDepartment = {
-      Dept_Id: department.id,
-      Dept_Name: department.name,
-      Total_Employees: department._count.employees,
+    const [newDept] = await prisma.$queryRaw`
+      SELECT 
+        d.Dept_Id AS Dept_Id,
+        d.Dept_Name AS Dept_Name,
+        COUNT(e.Employee_Id) AS Total_Employees
+      FROM Department d
+      LEFT JOIN Employee e ON e.Dept_Id = d.Dept_Id
+      WHERE d.Dept_Id = LAST_INSERT_ID()
+      GROUP BY d.Dept_Id, d.Dept_Name;
+    `;
+
+    const formatted = {
+      Dept_Id: toNum(newDept.Dept_Id),
+      Dept_Name: newDept.Dept_Name,
+      Total_Employees: toNum(newDept.Total_Employees),
     };
 
-    res.json(formattedDepartment);
+    res.json(formatted);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to create department" });
   }
 });
 
-// PUT update department
+//update
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { Dept_Name, Total_Employees } = req.body;
+    const { Dept_Name } = req.body;
 
     if (!Dept_Name || Dept_Name.trim() === "") {
       return res.status(400).json({ error: "Department name is required" });
     }
 
-    const department = await prisma.department.update({
-      where: { id: parseInt(id) },
-      data: { name: Dept_Name },
-      include: {
-        _count: {
-          select: { employees: true },
-        },
-      },
-    });
+    // Update the department
+    await prisma.$executeRaw`
+      UPDATE Department
+      SET Dept_Name = ${Dept_Name}
+      WHERE Dept_Id = ${parseInt(id)};
+    `;
 
-    const formattedDepartment = {
-      Dept_Id: department.id,
-      Dept_Name: department.name,
-      Total_Employees: department._count.employees,
+    // Fetch updated department with employee count
+    const [updatedDept] = await prisma.$queryRaw`
+      SELECT 
+        d.Dept_Id AS Dept_Id,
+        d.Dept_Name AS Dept_Name,
+        COUNT(e.Employee_Id) AS Total_Employees
+      FROM Department d
+      LEFT JOIN Employee e ON e.Dept_Id = d.Dept_Id
+      WHERE d.Dept_Id = ${parseInt(id)}
+      GROUP BY d.Dept_Id, d.Dept_Name;
+    `;
+
+    const formatted = {
+      Dept_Id: toNum(updatedDept.Dept_Id),
+      Dept_Name: updatedDept.Dept_Name,
+      Total_Employees: toNum(updatedDept.Total_Employees),
     };
 
-    res.json(formattedDepartment);
+    res.json(formatted);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to update department" });
   }
 });
 
-// DELETE department
+
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    await prisma.department.delete({
-      where: { id: parseInt(id) },
-    });
+    await prisma.$executeRaw`
+      DELETE FROM Department
+      WHERE Dept_Id = ${parseInt(id)};
+    `;
 
     res.json({ message: "Department deleted successfully" });
   } catch (error) {

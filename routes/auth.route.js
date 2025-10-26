@@ -5,9 +5,10 @@ import jwt from "jsonwebtoken";
 
 const router = express.Router();
 
+const toNum = (val) => (typeof val === "bigint" ? Number(val) : val);
+
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
-
   try {
     if (!email || !password) {
       return res
@@ -15,21 +16,22 @@ router.post("/login", async (req, res) => {
         .json({ message: "Email and password are required" });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
+    // Raw SQL
+    const [user] = await prisma.$queryRaw`
+      SELECT User_Id AS id, User_Name AS name, E_mail AS email, Password AS password, Role AS role
+      FROM User
+      WHERE E_mail = ${email}
+      LIMIT 1;
+    `;
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
+    if (!validPassword)
       return res.status(401).json({ message: "Invalid credentials" });
-    }
 
     const token = jwt.sign(
-      { id: user.id, role: user.role, email: user.email },
+      { id: toNum(user.id), role: user.role, email: user.email },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
@@ -37,7 +39,7 @@ router.post("/login", async (req, res) => {
     res.status(200).json({
       message: "Login successful",
       user: {
-        id: user.id,
+        id: toNum(user.id),
         name: user.name,
         email: user.email,
         role: user.role,
@@ -64,6 +66,8 @@ router.post("/signup", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    //INSERT INTO user (name, email, password, role) VALUES (?, ?, ?, IFNULL(?, 'Employee'));
 
     const newUser = await prisma.user.create({
       data: {
@@ -98,16 +102,20 @@ router.post("/signup", async (req, res) => {
 
 router.get("/users", async (req, res) => {
   try {
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
-    });
+    const users = await prisma.$queryRaw`
+      SELECT User_Id AS id, User_Name AS name, E_mail AS email, Role AS role
+      FROM User
+      ORDER BY User_Id ASC;
+    `;
 
-    res.status(200).json(users);
+    res.status(200).json(
+      users.map((u) => ({
+        id: toNum(u.id),
+        name: u.name,
+        email: u.email,
+        role: u.role,
+      }))
+    );
   } catch (err) {
     console.error("Get Users Error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -117,22 +125,21 @@ router.get("/users", async (req, res) => {
 router.get("/users/:id", async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
+    const [user] = await prisma.$queryRaw`
+      SELECT User_Id AS id, User_Name AS name, E_mail AS email, Role AS role
+      FROM User
+      WHERE User_Id = ${userId}
+      LIMIT 1;
+    `;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    res.status(200).json({
+      id: toNum(user.id),
+      name: user.name,
+      email: user.email,
+      role: user.role,
     });
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    res.status(200).json(user);
   } catch (err) {
     console.error("Get User Error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -207,7 +214,7 @@ router.put("/users/:id", async (req, res) => {
 
     const updateData = { name, email, role };
 
-    // Only update password if provided
+    // Only update password
     if (password && password.trim() !== "") {
       updateData.password = await bcrypt.hash(password, 10);
     }
