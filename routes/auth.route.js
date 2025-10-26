@@ -4,9 +4,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 const router = express.Router();
-
 const toNum = (val) => (typeof val === "bigint" ? Number(val) : val);
 
+//login
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
   try {
@@ -16,7 +16,6 @@ router.post("/login", async (req, res) => {
         .json({ message: "Email and password are required" });
     }
 
-    // Raw SQL
     const [user] = await prisma.$queryRaw`
       SELECT User_Id AS id, User_Name AS name, E_mail AS email, Password AS password, Role AS role
       FROM User
@@ -52,34 +51,38 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// signup
 router.post("/signup", async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
-
     if (!name || !email || !password) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
+    const [existingUser] = await prisma.$queryRaw`
+      SELECT User_Id AS id
+      FROM User
+      WHERE E_mail = ${email}
+      LIMIT 1;
+    `;
+    if (existingUser)
       return res.status(409).json({ message: "Email already registered" });
-    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    //INSERT INTO user (name, email, password, role) VALUES (?, ?, ?, IFNULL(?, 'Employee'));
+    await prisma.$executeRaw`
+      INSERT INTO User (User_Name, E_mail, Password, Role)
+      VALUES (${name}, ${email}, ${hashedPassword}, ${role || "Employee"});
+    `;
 
-    const newUser = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: role || "Employee",
-      },
-    });
+    const [newUser] = await prisma.$queryRaw`
+      SELECT *
+      FROM User
+      WHERE User_Id = LAST_INSERT_ID();
+    `;
 
     const token = jwt.sign(
-      { id: newUser.id, email: newUser.email, role: newUser.role },
+      { id: toNum(newUser.User_Id), email: newUser.E_mail, role: newUser.Role },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
@@ -87,10 +90,10 @@ router.post("/signup", async (req, res) => {
     res.status(201).json({
       message: "User registered successfully",
       user: {
-        id: newUser.id,
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
+        id: toNum(newUser.User_Id),
+        name: newUser.User_Name,
+        email: newUser.E_mail,
+        role: newUser.Role,
       },
       token,
     });
@@ -100,6 +103,7 @@ router.post("/signup", async (req, res) => {
   }
 });
 
+//get all users
 router.get("/users", async (req, res) => {
   try {
     const users = await prisma.$queryRaw`
@@ -125,6 +129,7 @@ router.get("/users", async (req, res) => {
 router.get("/users/:id", async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
+
     const [user] = await prisma.$queryRaw`
       SELECT User_Id AS id, User_Name AS name, E_mail AS email, Role AS role
       FROM User
@@ -146,39 +151,44 @@ router.get("/users/:id", async (req, res) => {
   }
 });
 
+//create user
 router.post("/users", async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
-
     if (!name || !email || !password || !role) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
+    const [existingUser] = await prisma.$queryRaw`
+      SELECT User_Id AS id
+      FROM User
+      WHERE E_mail = ${email}
+      LIMIT 1;
+    `;
+    if (existingUser)
       return res.status(409).json({ message: "Email already exists" });
-    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newUser = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
-    });
+    await prisma.$executeRaw`
+      INSERT INTO User (User_Name, E_mail, Password, Role)
+      VALUES (${name}, ${email}, ${hashedPassword}, ${role});
+    `;
+
+    const [newUser] = await prisma.$queryRaw`
+      SELECT *
+      FROM User
+      WHERE User_Id = LAST_INSERT_ID();
+    `;
 
     res.status(201).json({
       message: "User created successfully",
-      user: newUser,
+      user: {
+        id: toNum(newUser.User_Id),
+        name: newUser.User_Name,
+        email: newUser.E_mail,
+        role: newUser.Role,
+      },
     });
   } catch (err) {
     console.error("Create User Error:", err);
@@ -186,6 +196,7 @@ router.post("/users", async (req, res) => {
   }
 });
 
+//update
 router.put("/users/:id", async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
@@ -197,42 +208,60 @@ router.put("/users/:id", async (req, res) => {
         .json({ message: "Name, email, and role are required" });
     }
 
-    const existingUser = await prisma.user.findUnique({
-      where: { id: userId },
-    });
-
-    if (!existingUser) {
+    const [existingUser] = await prisma.$queryRaw`
+      SELECT *
+      FROM User
+      WHERE User_Id = ${userId}
+      LIMIT 1;
+    `;
+    if (!existingUser)
       return res.status(404).json({ message: "User not found" });
-    }
 
-    if (email !== existingUser.email) {
-      const emailExists = await prisma.user.findUnique({ where: { email } });
-      if (emailExists) {
+    // Check for email
+    if (email !== existingUser.E_mail) {
+      const [emailExists] = await prisma.$queryRaw`
+        SELECT User_Id
+        FROM User
+        WHERE E_mail = ${email}
+        LIMIT 1;
+      `;
+      if (emailExists)
         return res.status(409).json({ message: "Email already exists" });
-      }
     }
 
-    const updateData = { name, email, role };
-
-    // Only update password
+    // Hash password
+    let sqlUpdate;
     if (password && password.trim() !== "") {
-      updateData.password = await bcrypt.hash(password, 10);
+      const hashedPassword = await bcrypt.hash(password, 10);
+      sqlUpdate = prisma.$executeRaw`
+        UPDATE User
+        SET User_Name = ${name}, E_mail = ${email}, Role = ${role}, Password = ${hashedPassword}
+        WHERE User_Id = ${userId};
+      `;
+    } else {
+      sqlUpdate = prisma.$executeRaw`
+        UPDATE User
+        SET User_Name = ${name}, E_mail = ${email}, Role = ${role}
+        WHERE User_Id = ${userId};
+      `;
     }
+    await sqlUpdate;
 
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: updateData,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
-    });
+    const [updatedUser] = await prisma.$queryRaw`
+      SELECT *
+      FROM User
+      WHERE User_Id = ${userId}
+      LIMIT 1;
+    `;
 
     res.status(200).json({
       message: "User updated successfully",
-      user: updatedUser,
+      user: {
+        id: toNum(updatedUser.User_Id),
+        name: updatedUser.User_Name,
+        email: updatedUser.E_mail,
+        role: updatedUser.Role,
+      },
     });
   } catch (err) {
     console.error("Update User Error:", err);
@@ -240,22 +269,23 @@ router.put("/users/:id", async (req, res) => {
   }
 });
 
+//delete
 router.delete("/users/:id", async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
-    //console.log("user", userId);
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-    });
+    const [user] = await prisma.$queryRaw`
+      SELECT *
+      FROM User
+      WHERE User_Id = ${userId}
+      LIMIT 1;
+    `;
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    await prisma.user.delete({
-      where: { id: userId },
-    });
+    await prisma.$executeRaw`
+      DELETE FROM User
+      WHERE User_Id = ${userId};
+    `;
 
     res.status(200).json({ message: "User deleted successfully" });
   } catch (err) {
